@@ -1,1 +1,467 @@
+"""
+Multi-page Streamlit App: Medical Claims Analysis
+File: streamlit_medical_claims_app.py
+
+How to run:
+1. Save this file as `streamlit_medical_claims_app.py` (or any name).
+2. Install requirements: `pip install -r requirements.txt`
+   Recommended requirements.txt:
+   streamlit
+   pandas
+   numpy
+   scikit-learn
+   plotly
+   matplotlib
+   seaborn
+
+3. Run: `streamlit run streamlit_medical_claims_app.py`
+
+Notes:
+- This single-file app emulates multiple pages using a sidebar navigation.
+- If you'd prefer the Streamlit "pages/" multi-file structure I can split it into separate files.
+
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from io import StringIO
+import plotly.express as px
+import plotly.graph_objects as go
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.metrics import mean_absolute_error, r2_score, accuracy_score, roc_auc_score
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+
+st.set_page_config(page_title="Medical Claims Dashboard", layout="wide")
+
+# ---------------------- Helpers ----------------------
+@st.cache_data
+def load_csv(uploaded_file):
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception:
+        uploaded_file.seek(0)
+        df = pd.read_excel(uploaded_file)
+    return df
+
+@st.cache_data
+def basic_preprocess(df_raw):
+    df = df_raw.copy()
+    # Standardize column names
+    df.columns = [c.strip() for c in df.columns]
+
+    # Ensure expected columns exist
+    expected = [
+        'Relationship','DOB','Case Status','Visit Date','Type of Visit','Case/ Claims Type',
+        'Reject Remarks','Clinic Code','Clinic State','AA Panel','Medical Leave','No. of MC Days',
+        'MC Start date','MC End date','Annual Limit (RM)','Insurance Amount (RM)',
+        'Patient Excess Amount (RM)','Total Bill (RM)','Diagnosis 1 Id','Diagnosis 1',
+        'Diagnosis 2 Id','Diagnosis 2','Diagnosis 3 Id','Diagnosis 3','Diagnosis 4 Id','Diagnosis 4',
+        'Diagnosis 5 Id','Diagnosis 5'
+    ]
+    # calculate age from DOB and visit date
+    if 'DOB' in df.columns:
+        df['DOB'] = pd.to_datetime(df['DOB'], errors='coerce')
+    if 'Visit Date' in df.columns:
+        df['Visit Date'] = pd.to_datetime(df['Visit Date'], errors='coerce')
+    else:
+        # create Visit Date if missing
+        df['Visit Date'] = pd.NaT
+
+    # Age at visit
+    df['Age'] = (df['Visit Date'] - df['DOB']).dt.days // 365
+
+    # Clean numeric columns
+    for col in ['No. of MC Days','Annual Limit (RM)','Insurance Amount (RM)','Patient Excess Amount (RM)','Total Bill (RM)']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Medical leave dates
+    for col in ['MC Start date','MC End date']:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+
+    # If No. of MC Days missing, infer from start/end
+    if 'No. of MC Days' in df.columns and ('MC Start date' in df.columns and 'MC End date' in df.columns):
+        mask = df['No. of MC Days'].isna() & df['MC Start date'].notna() & df['MC End date'].notna()
+        df.loc[mask, 'No. of MC Days'] = (df.loc[mask, 'MC End date'] - df.loc[mask, 'MC Start date']).dt.days + 1
+
+    # Create Year-Month for trend
+    df['YearMonth'] = df['Visit Date'].dt.to_period('M').astype(str)
+
+    # Normalize Case Status
+    if 'Case Status' in df.columns:
+        df['Case Status'] = df['Case Status'].astype(str).str.strip().str.title()
+
+    # Top diagnosis column
+    diag_cols = [c for c in df.columns if c.lower().startswith('diagnosis') and not c.lower().endswith('id')]
+    df['Primary Diagnosis'] = None
+    for c in diag_cols:
+        df.loc[df['Primary Diagnosis'].isna() & df[c].notna(), 'Primary Diagnosis'] = df[c]
+
+    return df
+
+# Helper for filters
+def apply_filters(df):
+    st.sidebar.markdown("### Filters")
+    date_min = df['Visit Date'].min()
+    date_max = df['Visit Date'].max()
+    date_range = st.sidebar.date_input("Visit Date range", value=(date_min.date() if pd.notna(date_min) else None,
+                                                                      date_max.date() if pd.notna(date_max) else None))
+    if date_range and len(date_range) == 2:
+        start, end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+        df = df[(df['Visit Date'] >= start) & (df['Visit Date'] <= end)]
+
+    if 'Clinic State' in df.columns:
+        states = st.sidebar.multiselect('Clinic State', options=df['Clinic State'].dropna().unique().tolist(), default=None)
+        if states:
+            df = df[df['Clinic State'].isin(states)]
+
+    if 'Type of Visit' in df.columns:
+        vtypes = st.sidebar.multiselect('Type of Visit', options=df['Type of Visit'].dropna().unique().tolist(), default=None)
+        if vtypes:
+            df = df[df['Type of Visit'].isin(vtypes)]
+
+    return df
+
+# ---------------------- Pages ----------------------
+
+def page_overview(df):
+    st.title('Overview — Medical Claims')
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    total_visits = len(df)
+    total_cost = df['Total Bill (RM)'].sum()
+    avg_cost = df['Total Bill (RM)'].mean()
+    avg_mc = df['No. of MC Days'].mean()
+    approved_rate = None
+    if 'Case Status' in df.columns:
+        approved = df['Case Status'].str.contains('Approve', case=False, na=False).sum()
+        approved_rate = f"{approved}/{total_visits}"
+
+    col1.metric('Total Visits', f"{total_visits}")
+    col2.metric('Total Bill (RM)', f"{total_cost:,.2f}")
+    col3.metric('Avg Bill/Visit (RM)', f"{avg_cost:,.2f}" if not np.isnan(avg_cost) else "-")
+    col4.metric('Avg MC Days', f"{avg_mc:.1f}" if not np.isnan(avg_mc) else "-")
+    col5.metric('Approved Claims', approved_rate if approved_rate else '-')
+
+    # Time series
+    ts = df.groupby('YearMonth')['Total Bill (RM)'].agg(['count','sum']).reset_index().rename(columns={'count':'Visits','sum':'TotalCost'})
+    if not ts.empty:
+        fig = px.line(ts, x='YearMonth', y=['Visits','TotalCost'], title='Visits and Total Cost Over Time')
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Age distribution
+    if 'Age' in df.columns:
+        fig2 = px.histogram(df, x='Age', nbins=20, title='Age Distribution')
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # Top diagnoses
+    if 'Primary Diagnosis' in df.columns:
+        topd = df['Primary Diagnosis'].value_counts().nlargest(10).reset_index()
+        topd.columns = ['Diagnosis','Count']
+        fig3 = px.bar(topd, x='Diagnosis', y='Count', title='Top 10 Primary Diagnoses')
+        st.plotly_chart(fig3, use_container_width=True)
+
+    st.markdown('---')
+    st.subheader('Raw data sample')
+    st.dataframe(df.head(200))
+
+
+def page_cost_analysis(df):
+    st.title('Cost Analysis')
+    st.markdown('Cost KPIs and charts')
+    col1, col2, col3 = st.columns(3)
+    col1.metric('Total Cost (RM)', f"{df['Total Bill (RM)'].sum():,.2f}")
+    col2.metric('Avg Cost/Visit (RM)', f"{df['Total Bill (RM)'].mean():,.2f}" if not np.isnan(df['Total Bill (RM)'].mean()) else '-')
+    col3.metric('Median Cost/Visit (RM)', f"{df['Total Bill (RM)'].median():,.2f}" if not np.isnan(df['Total Bill (RM)'].median()) else '-')
+
+    # Cost by Clinic
+    if 'Clinic Code' in df.columns:
+        top_clinic = df.groupby('Clinic Code')['Total Bill (RM)'].sum().nlargest(15).reset_index()
+        fig = px.bar(top_clinic, x='Clinic Code', y='Total Bill (RM)', title='Top 15 Clinics by Total Bill')
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Cost by Diagnosis
+    if 'Primary Diagnosis' in df.columns:
+        fig2 = px.box(df[df['Total Bill (RM)'].notna()], x='Primary Diagnosis', y='Total Bill (RM)', title='Cost distribution by Primary Diagnosis')
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # Annual limit utilization
+    if 'Annual Limit (RM)' in df.columns and 'Insurance Amount (RM)' in df.columns:
+        util = df.dropna(subset=['Annual Limit (RM)','Insurance Amount (RM)']).copy()
+        util['UtilPct'] = util['Insurance Amount (RM)'] / util['Annual Limit (RM)'] * 100
+        fig3 = px.histogram(util, x='UtilPct', nbins=50, title='Annual Limit Utilization (%)')
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # Table: cases exceeding annual limit
+    if 'Insurance Amount (RM)' in df.columns and 'Annual Limit (RM)' in df.columns:
+        exceed = df[df['Insurance Amount (RM)'] > df['Annual Limit (RM)']]
+        st.subheader('Cases where Insurance Amount > Annual Limit')
+        st.dataframe(exceed)
+
+
+def page_mc_analysis(df):
+    st.title('Medical Leave (MC) Analysis')
+    st.markdown('MC trends and distributions')
+
+    if 'No. of MC Days' in df.columns:
+        st.subheader('MC Days distribution')
+        fig = px.histogram(df[df['No. of MC Days'].notna()], x='No. of MC Days', nbins=30)
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader('MC Days by Primary Diagnosis')
+        if 'Primary Diagnosis' in df.columns:
+            fig2 = px.box(df[df['No. of MC Days'].notna()], x='Primary Diagnosis', y='No. of MC Days')
+            st.plotly_chart(fig2, use_container_width=True)
+
+    else:
+        st.info('No MC Days column found in dataset.')
+
+
+def page_diagnosis_insights(df):
+    st.title('Diagnosis Insights')
+    if 'Primary Diagnosis' not in df.columns:
+        st.info('No diagnosis columns detected.')
+        return
+
+    st.subheader('Top Diagnoses')
+    topd = df['Primary Diagnosis'].value_counts().nlargest(20).reset_index()
+    topd.columns = ['Diagnosis','Count']
+    fig = px.bar(topd, x='Diagnosis', y='Count')
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader('Diagnosis co-occurrence (primary vs secondary)')
+    # co-occurrence matrix: Primary vs Diagnosis 2
+    if 'Diagnosis 2' in df.columns:
+        co = pd.crosstab(df['Primary Diagnosis'], df['Diagnosis 2'])
+        # reduce to top 20 primary
+        top_primary = df['Primary Diagnosis'].value_counts().nlargest(20).index
+        co_small = co.loc[top_primary]
+        fig2 = go.Figure(data=go.Heatmap(z=co_small.values, x=co_small.columns, y=co_small.index))
+        fig2.update_layout(title='Co-occurrence Primary vs Diagnosis 2')
+        st.plotly_chart(fig2, use_container_width=True)
+
+
+def page_clinic_performance(df):
+    st.title('Clinic Performance')
+    if 'Clinic Code' not in df.columns:
+        st.info('No Clinic Code column found.')
+        return
+
+    clinics = df.groupby('Clinic Code').agg(
+        Visits=('Clinic Code','size'),
+        TotalBill=('Total Bill (RM)','sum'),
+        AvgBill=('Total Bill (RM)','mean')
+    ).sort_values('TotalBill', ascending=False).reset_index()
+    st.subheader('Clinic summary')
+    st.dataframe(clinics.head(200))
+
+    fig = px.bar(clinics.nlargest(20,'TotalBill'), x='Clinic Code', y='TotalBill', title='Top 20 Clinics by Total Bill')
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Rejection rate per clinic
+    if 'Case Status' in df.columns:
+        def is_reject(s):
+            s = str(s).lower()
+            return ('reject' in s) or ('denied' in s) or ('rejected' in s)
+        df['IsRejected'] = df['Case Status'].apply(is_reject)
+        rej = df.groupby('Clinic Code').agg(Visits=('Clinic Code','size'), Rejected=('IsRejected','sum'))
+        rej['RejectionRate'] = rej['Rejected'] / rej['Visits'] * 100
+        rej = rej.reset_index().sort_values('RejectionRate', ascending=False)
+        st.subheader('Clinics with highest rejection rate')
+        st.dataframe(rej.head(50))
+
+
+def page_rejection_analysis(df):
+    st.title('Claim Rejection Analysis')
+    if 'Case Status' not in df.columns:
+        st.info('No Case Status column found.')
+        return
+
+    df['IsRejected'] = df['Case Status'].astype(str).str.contains('reject|denied|rejected', case=False, na=False)
+    rej_rate = df['IsRejected'].mean() * 100
+    st.metric('Overall Rejection Rate (%)', f"{rej_rate:.2f}")
+
+    if 'Reject Remarks' in df.columns:
+        remarks = df['Reject Remarks'].dropna().astype(str)
+        top_reasons = remarks.value_counts().nlargest(20).reset_index()
+        top_reasons.columns = ['RejectRemark','Count']
+        fig = px.bar(top_reasons, x='RejectRemark', y='Count', title='Top Reject Remarks')
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Rejection vs cost
+    if 'Total Bill (RM)' in df.columns:
+        fig2 = px.box(df, x='IsRejected', y='Total Bill (RM)', title='Total Bill by Reject/Approve')
+        st.plotly_chart(fig2, use_container_width=True)
+
+
+def page_predictive_models(df):
+    st.title('Predictive Models')
+    st.markdown('Simple model builders for demo purposes')
+
+    model_choice = st.selectbox('Choose model', ['Predict Rejection (classification)','Predict Total Bill (regression)','Predict Long MC (>3 days) (classification)'])
+
+    # Prepare features
+    usable = df.copy()
+    features = []
+    # candidate features
+    for c in ['Age','Type of Visit','Clinic State','Primary Diagnosis','No. of MC Days','Total Bill (RM)']:
+        if c in usable.columns:
+            features.append(c)
+
+    if model_choice == 'Predict Rejection (classification)':
+        if 'Case Status' not in usable.columns:
+            st.info('Case Status not available for training')
+            return
+        usable['target'] = usable['Case Status'].astype(str).str.contains('reject|denied|rejected', case=False, na=False).astype(int)
+
+    if model_choice == 'Predict Long MC (>3 days) (classification)':
+        if 'No. of MC Days' not in usable.columns:
+            st.info('No. of MC Days not available for training')
+            return
+        usable['target'] = (usable['No. of MC Days'] > 3).astype(int)
+
+    if model_choice == 'Predict Total Bill (regression)':
+        if 'Total Bill (RM)' not in usable.columns:
+            st.info('Total Bill not available for training')
+            return
+        usable['target'] = usable['Total Bill (RM)']
+
+    # Select features
+    st.write('Candidate features detected:', features)
+    chosen = st.multiselect('Select features to use', options=features, default=features[:4])
+
+    # Drop rows with missing target
+    usable = usable.dropna(subset=['target'])
+
+    if not chosen:
+        st.info('Select at least one feature')
+        return
+
+    X = usable[chosen]
+    y = usable['target']
+
+    # Preprocessing: simple impute + onehot for categorical
+    numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+    cat_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
+
+    numeric_transformer = Pipeline(steps=[('imputer', SimpleImputer(strategy='median'))])
+    cat_transformer = Pipeline(steps=[('imputer', SimpleImputer(strategy='constant', fill_value='missing')), ('ohe', OneHotEncoder(handle_unknown='ignore'))])
+
+    preprocessor = ColumnTransformer(transformers=[
+        ('num', numeric_transformer, numeric_cols),
+        ('cat', cat_transformer, cat_cols)
+    ])
+
+    X_proc = preprocessor.fit_transform(X)
+
+    X_train, X_test, y_train, y_test = train_test_split(X_proc, y, test_size=0.2, random_state=42)
+
+    if 'classification' in model_choice.lower():
+        clf = RandomForestClassifier(n_estimators=100, random_state=42)
+        clf.fit(X_train, y_train)
+        preds = clf.predict(X_test)
+        acc = accuracy_score(y_test, preds)
+        st.write('Accuracy:', f"{acc:.3f}")
+        if hasattr(clf, 'predict_proba'):
+            proba = clf.predict_proba(X_test)[:,1]
+            try:
+                auc = roc_auc_score(y_test, proba)
+                st.write('AUC:', f"{auc:.3f}")
+            except Exception:
+                pass
+        # Feature importance (approx)
+        try:
+            importances = clf.feature_importances_
+            # build feature names (numeric + ohe)
+            # This is approximate: show top importances only
+            top_idx = np.argsort(importances)[-20:][::-1]
+            st.write('Top feature importances (approx):')
+            for i in top_idx:
+                st.write(f"Feature {i}: importance {importances[i]:.4f}")
+        except Exception:
+            pass
+
+    else:
+        reg = RandomForestRegressor(n_estimators=100, random_state=42)
+        reg.fit(X_train, y_train)
+        preds = reg.predict(X_test)
+        mae = mean_absolute_error(y_test, preds)
+        r2 = r2_score(y_test, preds)
+        st.write('MAE:', f"{mae:.2f}")
+        st.write('R2:', f"{r2:.3f}")
+
+    # Show sample predictions
+    st.subheader('Sample predictions')
+    sample_X = X_test[:20]
+    sample_preds = clf.predict(sample_X) if 'classification' in model_choice.lower() else reg.predict(sample_X)
+    st.dataframe(pd.DataFrame({'prediction': sample_preds}))
+
+# ---------------------- App Entry ----------------------
+
+def main():
+    st.sidebar.title('Medical Claims Dashboard')
+    st.sidebar.markdown('Upload your CSV/XLSX file and navigate pages')
+
+    uploaded_file = st.sidebar.file_uploader('Upload data file (CSV or XLSX)', type=['csv','xlsx','xls'])
+
+    if uploaded_file is None:
+        st.info('Please upload your medical claims dataset to proceed. You can also use the sample demo button below.')
+        if st.sidebar.button('Load demo sample'):
+            # create a small demo
+            demo = pd.DataFrame({
+                'Relationship':['Employee','Spouse','Child']*10,
+                'DOB':pd.date_range('1980-01-01', periods=30, freq='365D'),
+                'Case Status':['Approved','Rejected','Approved']*10,
+                'Visit Date':pd.date_range('2024-01-01', periods=30, freq='15D'),
+                'Type of Visit':['OP','IP','Specialist']*10,
+                'Clinic Code':['C1','C2','C3']*10,
+                'Clinic State':['Kuala Lumpur','Johor','Penang']*10,
+                'No. of MC Days':[0,2,5]*10,
+                'MC Start date':[pd.NaT,pd.Timestamp('2024-01-10'),pd.Timestamp('2024-02-01')]*10,
+                'MC End date':[pd.NaT,pd.Timestamp('2024-01-11'),pd.Timestamp('2024-02-05')]*10,
+                'Annual Limit (RM)':[1000,2000,1500]*10,
+                'Insurance Amount (RM)':[200,500,1700]*10,
+                'Patient Excess Amount (RM)':[0,50,100]*10,
+                'Total Bill (RM)':[250,600,2000]*10,
+                'Diagnosis 1':['Flu','Fracture','Dengue']*10,
+                'Diagnosis 2':[None,'Injury',None]*10
+            })
+            df = basic_preprocess(demo)
+        else:
+            return
+    else:
+        df_raw = load_csv(uploaded_file)
+        df = basic_preprocess(df_raw)
+
+    # Apply filters
+    df_filtered = apply_filters(df)
+
+    # Navigation
+    pages = {
+        'Overview': page_overview,
+        'Cost Analysis': page_cost_analysis,
+        'MC Analysis': page_mc_analysis,
+        'Diagnosis Insights': page_diagnosis_insights,
+        'Clinic Performance': page_clinic_performance,
+        'Claim Rejection': page_rejection_analysis,
+        'Predictive Models': page_predictive_models
+    }
+
+    page = st.sidebar.radio('Navigation', list(pages.keys()))
+    # Run page
+    try:
+        pages[page](df_filtered)
+    except Exception as e:
+        st.error(f"An error occurred while rendering the page: {e}")
+
+if __name__ == '__main__':
+    main()
 
