@@ -63,6 +63,20 @@ elif page == "EDA":
             sns.histplot(df["Total Bill (RM)"].dropna(), kde=True, ax=ax)
             st.pyplot(fig)
 
+        # Correlation between age, diagnosis, and total bill
+        if "DOB" in df.columns and "Total Bill (RM)" in df.columns and "Diagnosis 1" in df.columns:
+            st.subheader("Correlation Analysis")
+            df['Age'] = pd.to_datetime('today').year - pd.to_datetime(df['DOB'], errors='coerce').dt.year
+            df['Diagnosis 1 Encoded'] = LabelEncoder().fit_transform(df['Diagnosis 1'].astype(str))
+            corr_df = df[['Age', 'Diagnosis 1 Encoded', 'Total Bill (RM)']].dropna()
+            corr_matrix = corr_df.corr()
+            st.write(corr_matrix)
+
+            st.subheader("Correlation Heatmap")
+            fig, ax = plt.subplots()
+            sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', ax=ax)
+            st.pyplot(fig)
+
 # ================= AI MODELS (CLASSIFICATION) =================
 elif page == "AI Models":
     st.title("Claim Approval Prediction (RandomForest)")
@@ -120,8 +134,6 @@ elif page == "Cost Prediction":
     else:
         data = df.dropna(subset=["Diagnosis 1", "Total Bill (RM)"]).copy()
         data["Total Bill (RM)"] = pd.to_numeric(data["Total Bill (RM)"], errors='coerce')
-
-        # Drop rows with missing target
         data = data.dropna(subset=["Total Bill (RM)"])
 
         le = LabelEncoder()
