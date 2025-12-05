@@ -12,7 +12,7 @@ import shap
 st.set_page_config(page_title="Medical Claims AI Dashboard", layout="wide")
 
 # ================= Sidebar Navigation =================
-st.sidebar.title("📌 Navigation")
+st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["Home", "EDA", "AI Models", "Cost Prediction", "About"])
 
 uploaded_file = st.sidebar.file_uploader("Upload CSV or Excel File", type=["csv", "xlsx"])
@@ -25,13 +25,12 @@ def load_data(file):
         return pd.read_csv(file)
     return pd.read_excel(file)
 
-
 df = load_data(uploaded_file)
 
 # ================= HOME =================
 if page == "Home":
-    st.title("🏥 Medical Claims AI Dashboard")
-    st.write("AI-powered medical claims analytics using **Diagnosis 1 only**.")
+    st.title("Medical Claims AI Dashboard")
+    st.write("AI-powered medical claims analytics using Diagnosis 1 only.")
 
     if df is not None:
         st.success("Data loaded successfully!")
@@ -41,7 +40,7 @@ if page == "Home":
 
 # ================= EDA =================
 elif page == "EDA":
-    st.title("📊 Exploratory Data Analysis")
+    st.title("Exploratory Data Analysis")
 
     if df is None:
         st.warning("Upload a dataset first.")
@@ -66,7 +65,7 @@ elif page == "EDA":
 
 # ================= AI MODELS (CLASSIFICATION) =================
 elif page == "AI Models":
-    st.title("🤖 Claim Approval Prediction (RandomForest)")
+    st.title("Claim Approval Prediction (RandomForest)")
 
     if df is None:
         st.warning("Upload a dataset first.")
@@ -98,7 +97,7 @@ elif page == "AI Models":
         st.metric("Model Accuracy", f"{accuracy*100:.2f}%")
 
         # Feature Importance
-        st.subheader("Feature Importance (RandomForest)")
+        st.subheader("Feature Importance")
         fi = pd.DataFrame({"Feature": feature_cols, "Importance": model.feature_importances_})
         fig, ax = plt.subplots()
         sns.barplot(x="Importance", y="Feature", data=fi.sort_values(by="Importance", ascending=False), ax=ax)
@@ -121,7 +120,7 @@ elif page == "AI Models":
 
 # ================= COST PREDICTION (REGRESSION) =================
 elif page == "Cost Prediction":
-    st.title("💰 Total Bill Prediction (RandomForest Regressor)")
+    st.title("Total Bill Prediction (RandomForest Regressor)")
 
     if df is None:
         st.warning("Upload dataset first.")
@@ -150,7 +149,7 @@ elif page == "Cost Prediction":
         col2.metric("RMSE", f"RM {rmse:,.2f}")
 
         # Feature Importance
-        st.subheader("Feature Importance (RandomForest)")
+        st.subheader("Feature Importance")
         fi = pd.DataFrame({"Feature": ["Diagnosis 1 Encoded"], "Importance": model.feature_importances_})
         fig, ax = plt.subplots()
         sns.barplot(x="Importance", y="Feature", data=fi, ax=ax)
@@ -165,7 +164,7 @@ elif page == "Cost Prediction":
 
 # ================= ABOUT =================
 elif page == "About":
-    st.title("ℹ️ About This Dashboard")
-    st.write("• Uses RandomForest AI models")
-- Only Diagnosis 1 is used
-- Includes SHAP analysis, prediction downloads, EDA")
+    st.title("About This Dashboard")
+    st.write("- Uses RandomForest AI models")
+    st.write("- Only Diagnosis 1 is used")
+    st.write("- Includes SHAP analysis, prediction downloads, EDA")
