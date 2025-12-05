@@ -7,7 +7,6 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-import shap
 
 st.set_page_config(page_title="Medical Claims AI Dashboard", layout="wide")
 
@@ -59,8 +58,10 @@ elif page == "EDA":
 
         if "Total Bill (RM)" in df.columns:
             st.subheader("Total Bill Distribution")
+            # Convert to numeric, coerce errors to NaN
+            df["Total Bill (RM)"] = pd.to_numeric(df["Total Bill (RM)"], errors='coerce')
             fig, ax = plt.subplots()
-            sns.histplot(df["Total Bill (RM)"], kde=True, ax=ax)
+            sns.histplot(df["Total Bill (RM)"].dropna(), kde=True, ax=ax)
             st.pyplot(fig)
 
 # ================= AI MODELS (CLASSIFICATION) =================
@@ -82,9 +83,10 @@ elif page == "AI Models":
 
         feature_cols = ["Diagnosis 1 Encoded"]
         if "Total Bill (RM)" in data.columns:
+            data["Total Bill (RM)"] = pd.to_numeric(data["Total Bill (RM)"], errors='coerce')
             feature_cols.append("Total Bill (RM)")
 
-        X = data[feature_cols]
+        X = data[feature_cols].fillna(0)
         y = data["Case Status Encoded"]
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -103,14 +105,6 @@ elif page == "AI Models":
         sns.barplot(x="Importance", y="Feature", data=fi.sort_values(by="Importance", ascending=False), ax=ax)
         st.pyplot(fig)
 
-        # SHAP
-        st.subheader("SHAP Explanation")
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_test)
-        fig2, ax2 = plt.subplots(figsize=(8, 5))
-        shap.summary_plot(shap_values[1], X_test, show=False)
-        st.pyplot(fig2)
-
         # CSV download of predictions
         st.subheader("Download Predictions")
         output_df = X_test.copy()
@@ -128,11 +122,12 @@ elif page == "Cost Prediction":
         st.error("Missing 'Total Bill (RM)' column.")
     else:
         data = df.dropna(subset=["Diagnosis 1", "Total Bill (RM)"]).copy()
+        data["Total Bill (RM)"] = pd.to_numeric(data["Total Bill (RM)"], errors='coerce')
 
         le = LabelEncoder()
         data["Diagnosis 1 Encoded"] = le.fit_transform(data["Diagnosis 1"].astype(str))
 
-        X = data[["Diagnosis 1 Encoded"]]
+        X = data[["Diagnosis 1 Encoded"]].fillna(0)
         y = data["Total Bill (RM)"]
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -167,4 +162,4 @@ elif page == "About":
     st.title("About This Dashboard")
     st.write("- Uses RandomForest AI models")
     st.write("- Only Diagnosis 1 is used")
-    st.write("- Includes SHAP analysis, prediction downloads, EDA")
+    st.write("- Includes prediction downloads and EDA")
