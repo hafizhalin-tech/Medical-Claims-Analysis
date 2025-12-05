@@ -58,7 +58,6 @@ elif page == "EDA":
 
         if "Total Bill (RM)" in df.columns:
             st.subheader("Total Bill Distribution")
-            # Convert to numeric, coerce errors to NaN
             df["Total Bill (RM)"] = pd.to_numeric(df["Total Bill (RM)"], errors='coerce')
             fig, ax = plt.subplots()
             sns.histplot(df["Total Bill (RM)"].dropna(), kde=True, ax=ax)
@@ -98,14 +97,12 @@ elif page == "AI Models":
         accuracy = accuracy_score(y_test, preds)
         st.metric("Model Accuracy", f"{accuracy*100:.2f}%")
 
-        # Feature Importance
         st.subheader("Feature Importance")
         fi = pd.DataFrame({"Feature": feature_cols, "Importance": model.feature_importances_})
         fig, ax = plt.subplots()
         sns.barplot(x="Importance", y="Feature", data=fi.sort_values(by="Importance", ascending=False), ax=ax)
         st.pyplot(fig)
 
-        # CSV download of predictions
         st.subheader("Download Predictions")
         output_df = X_test.copy()
         output_df["Predicted Status"] = le_status.inverse_transform(preds)
@@ -124,10 +121,13 @@ elif page == "Cost Prediction":
         data = df.dropna(subset=["Diagnosis 1", "Total Bill (RM)"]).copy()
         data["Total Bill (RM)"] = pd.to_numeric(data["Total Bill (RM)"], errors='coerce')
 
+        # Drop rows with missing target
+        data = data.dropna(subset=["Total Bill (RM)"])
+
         le = LabelEncoder()
         data["Diagnosis 1 Encoded"] = le.fit_transform(data["Diagnosis 1"].astype(str))
 
-        X = data[["Diagnosis 1 Encoded"]].fillna(0)
+        X = data[["Diagnosis 1 Encoded"]]
         y = data["Total Bill (RM)"]
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -143,14 +143,12 @@ elif page == "Cost Prediction":
         col1.metric("MAE", f"RM {mae:,.2f}")
         col2.metric("RMSE", f"RM {rmse:,.2f}")
 
-        # Feature Importance
         st.subheader("Feature Importance")
         fi = pd.DataFrame({"Feature": ["Diagnosis 1 Encoded"], "Importance": model.feature_importances_})
         fig, ax = plt.subplots()
         sns.barplot(x="Importance", y="Feature", data=fi, ax=ax)
         st.pyplot(fig)
 
-        # CSV download
         st.subheader("Download Cost Predictions")
         out = X_test.copy()
         out["Predicted Cost (RM)"] = preds
