@@ -168,4 +168,4 @@ elif page == "About":
     st.title("ℹ️ About This Dashboard")
     st.write("• Uses RandomForest AI models")
 - Only Diagnosis 1 is used
-• Includes SHAP analysis, prediction downloads, EDA")
+- Includes SHAP analysis, prediction downloads, EDA")
