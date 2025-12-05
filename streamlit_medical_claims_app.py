@@ -6,144 +6,166 @@ import seaborn as sns
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error
-from xgboost import XGBClassifier, XGBRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import shap
 
 st.set_page_config(page_title="Medical Claims AI Dashboard", layout="wide")
 
+# ================= Sidebar Navigation =================
 st.sidebar.title("📌 Navigation")
 page = st.sidebar.radio("Go to", ["Home", "EDA", "AI Models", "Cost Prediction", "About"])
 
-st.sidebar.divider()
-uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=["csv", "xlsx"])
+uploaded_file = st.sidebar.file_uploader("Upload CSV or Excel File", type=["csv", "xlsx"])
 
-def load_data(uploaded_file):
-    if uploaded_file is None:
+# ================= Data Loader =================
+def load_data(file):
+    if file is None:
         return None
-    if uploaded_file.name.endswith("csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
-    return df
+    if file.name.endswith("csv"):
+        return pd.read_csv(file)
+    return pd.read_excel(file)
+
 
 df = load_data(uploaded_file)
 
-# -------------------------------- HOME --------------------------------
+# ================= HOME =================
 if page == "Home":
     st.title("🏥 Medical Claims AI Dashboard")
-    st.write("This is an AI-powered dashboard for analysing medical claims.")
-    st.write("**Diagnosis 1** is used as the main diagnostic variable.")
+    st.write("AI-powered medical claims analytics using **Diagnosis 1 only**.")
+
     if df is not None:
-        st.success("Data successfully loaded!")
+        st.success("Data loaded successfully!")
         st.write(df.head())
     else:
-        st.warning("Please upload a dataset using the sidebar.")
+        st.info("Upload a dataset from the sidebar.")
 
-# -------------------------------- EDA --------------------------------
+# ================= EDA =================
 elif page == "EDA":
     st.title("📊 Exploratory Data Analysis")
+
     if df is None:
-        st.warning("Please upload a dataset first.")
+        st.warning("Upload a dataset first.")
     else:
-        st.subheader("Dataset Overview")
+        st.subheader("Dataset Preview")
         st.write(df.head())
+
+        st.subheader("Summary Statistics")
         st.write(df.describe())
 
-        # Age calculation
-        if "DOB" in df.columns:
-            df["DOB"] = pd.to_datetime(df["DOB"], errors="coerce")
-            df["Age"] = (pd.Timestamp("today") - df["DOB"]).dt.days // 365
-
-        # Plot diagnosis frequency
         if "Diagnosis 1" in df.columns:
             st.subheader("Diagnosis 1 Frequency")
             fig, ax = plt.subplots()
-            df["Diagnosis 1"].value_counts().head(20).plot(kind="bar", ax=ax)
+            df["Diagnosis 1"].astype(str).value_counts().head(20).plot(kind="bar", ax=ax)
             st.pyplot(fig)
 
-        # Cost distribution
         if "Total Bill (RM)" in df.columns:
             st.subheader("Total Bill Distribution")
-            fig2, ax2 = plt.subplots()
-            sns.histplot(df["Total Bill (RM)"], kde=True, ax=ax2)
-            st.pyplot(fig2)
+            fig, ax = plt.subplots()
+            sns.histplot(df["Total Bill (RM)"], kde=True, ax=ax)
+            st.pyplot(fig)
 
-# -------------------------------- AI MODELS --------------------------------
+# ================= AI MODELS (CLASSIFICATION) =================
 elif page == "AI Models":
-    st.title("🤖 Claim Approval Prediction (AI Model)")
+    st.title("🤖 Claim Approval Prediction (RandomForest)")
+
     if df is None:
-        st.warning("Please upload a dataset first.")
+        st.warning("Upload a dataset first.")
+    elif "Case Status" not in df.columns:
+        st.error("Missing 'Case Status' column.")
     else:
-        if "Case Status" not in df.columns:
-            st.error("Missing 'Case Status' column.")
-        else:
-            # Preprocess
-            data = df.copy()
-            data = data.dropna(subset=["Diagnosis 1", "Case Status"])  # Clean
+        data = df.dropna(subset=["Diagnosis 1", "Case Status"]).copy()
 
-            # Encode diagnosis
-            le_diag = LabelEncoder()
-            data["Diagnosis 1 Encoded"] = le_diag.fit_transform(data["Diagnosis 1"].astype(str))
+        le_diag = LabelEncoder()
+        data["Diagnosis 1 Encoded"] = le_diag.fit_transform(data["Diagnosis 1"].astype(str))
 
-            # Encode Case Status
-            le_status = LabelEncoder()
-            data["Case Status Encoded"] = le_status.fit_transform(data["Case Status"].astype(str))
+        le_status = LabelEncoder()
+        data["Case Status Encoded"] = le_status.fit_transform(data["Case Status"].astype(str))
 
-            features = ["Diagnosis 1 Encoded"]
-            if "Total Bill (RM)" in df.columns:
-                features.append("Total Bill (RM)")
+        feature_cols = ["Diagnosis 1 Encoded"]
+        if "Total Bill (RM)" in data.columns:
+            feature_cols.append("Total Bill (RM)")
 
-            X = data[features]
-            y = data["Case Status Encoded"]
+        X = data[feature_cols]
+        y = data["Case Status Encoded"]
 
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-            model = XGBClassifier()
-            model.fit(X_train, y_train)
-            preds = model.predict(X_test)
+        model = RandomForestClassifier(random_state=42)
+        model.fit(X_train, y_train)
+        preds = model.predict(X_test)
 
-            accuracy = accuracy_score(y_test, preds)
-            st.metric("Model Accuracy", f"{accuracy*100:.2f}%")
+        accuracy = accuracy_score(y_test, preds)
+        st.metric("Model Accuracy", f"{accuracy*100:.2f}%")
 
-            # SHAP Explainability
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_test)
+        # Feature Importance
+        st.subheader("Feature Importance (RandomForest)")
+        fi = pd.DataFrame({"Feature": feature_cols, "Importance": model.feature_importances_})
+        fig, ax = plt.subplots()
+        sns.barplot(x="Importance", y="Feature", data=fi.sort_values(by="Importance", ascending=False), ax=ax)
+        st.pyplot(fig)
 
-            st.subheader("Feature Importance (SHAP)")
-            fig3, ax3 = plt.subplots(figsize=(8, 4))
-            shap.summary_plot(shap_values, X_test, show=False)
-            st.pyplot(fig3)
+        # SHAP
+        st.subheader("SHAP Explanation")
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_test)
+        fig2, ax2 = plt.subplots(figsize=(8, 5))
+        shap.summary_plot(shap_values[1], X_test, show=False)
+        st.pyplot(fig2)
 
-# -------------------------------- COST PREDICTION --------------------------------
+        # CSV download of predictions
+        st.subheader("Download Predictions")
+        output_df = X_test.copy()
+        output_df["Predicted Status"] = le_status.inverse_transform(preds)
+        csv_data = output_df.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Predictions CSV", csv_data, "predictions.csv", "text/csv")
+
+# ================= COST PREDICTION (REGRESSION) =================
 elif page == "Cost Prediction":
-    st.title("💰 Total Bill Prediction (Regression Model)")
+    st.title("💰 Total Bill Prediction (RandomForest Regressor)")
+
     if df is None:
-        st.warning("Upload data first.")
+        st.warning("Upload dataset first.")
+    elif "Total Bill (RM)" not in df.columns:
+        st.error("Missing 'Total Bill (RM)' column.")
     else:
-        if "Total Bill (RM)" not in df.columns:
-            st.error("Missing 'Total Bill (RM)' column.")
-        else:
-            data = df.dropna(subset=["Diagnosis 1", "Total Bill (RM)"])
+        data = df.dropna(subset=["Diagnosis 1", "Total Bill (RM)"]).copy()
 
-            le = LabelEncoder()
-            data["Diagnosis 1 Encoded"] = le.fit_transform(data["Diagnosis 1"].astype(str))
+        le = LabelEncoder()
+        data["Diagnosis 1 Encoded"] = le.fit_transform(data["Diagnosis 1"].astype(str))
 
-            X = data[["Diagnosis 1 Encoded"]]
-            y = data["Total Bill (RM)"]
+        X = data[["Diagnosis 1 Encoded"]]
+        y = data["Total Bill (RM)"]
 
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-            model = XGBRegressor()
-            model.fit(X_train, y_train)
-            preds = model.predict(X_test)
+        model = RandomForestRegressor(random_state=42)
+        model.fit(X_train, y_train)
+        preds = model.predict(X_test)
 
-            mae = mean_absolute_error(y_test, preds)
-            rmse = np.sqrt(mean_squared_error(y_test, preds))
+        mae = mean_absolute_error(y_test, preds)
+        rmse = np.sqrt(mean_squared_error(y_test, preds))
 
-            st.metric("MAE", f"RM {mae:,.2f}")
-            st.metric("RMSE", f"RM {rmse:,.2f}")
+        col1, col2 = st.columns(2)
+        col1.metric("MAE", f"RM {mae:,.2f}")
+        col2.metric("RMSE", f"RM {rmse:,.2f}")
 
-# -------------------------------- ABOUT --------------------------------
+        # Feature Importance
+        st.subheader("Feature Importance (RandomForest)")
+        fi = pd.DataFrame({"Feature": ["Diagnosis 1 Encoded"], "Importance": model.feature_importances_})
+        fig, ax = plt.subplots()
+        sns.barplot(x="Importance", y="Feature", data=fi, ax=ax)
+        st.pyplot(fig)
+
+        # CSV download
+        st.subheader("Download Cost Predictions")
+        out = X_test.copy()
+        out["Predicted Cost (RM)"] = preds
+        csv_out = out.to_csv(index=False).encode('utf-8')
+        st.download_button("Download Cost Prediction CSV", csv_out, "cost_predictions.csv", "text/csv")
+
+# ================= ABOUT =================
 elif page == "About":
     st.title("ℹ️ About This Dashboard")
-    st.write("Developed as a unified AI-driven diagnostic and cost analysis tool.")
+    st.write("• Uses RandomForest AI models
+• Only Diagnosis 1 is used
+• Includes SHAP analysis, prediction downloads, EDA")
