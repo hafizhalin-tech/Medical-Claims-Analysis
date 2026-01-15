@@ -6,19 +6,19 @@ import seaborn as sns
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-from sklearn.ensemble import IsolationForest
+from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, IsolationForest
+from sklearn.inspection import permutation_importance
+from sklearn.linear_model import LinearRegression
 from collections import Counter
 
-# ================= PAGE CONFIG =================
-st.set_page_config(
-    page_title="Medical Claims AI Dashboard",
-    layout="wide"
-)
+from statsmodels.tsa.statespace.sarimax import SARIMAX
 
-# ================= SIDEBAR =================
+st.set_page_config("Medical Claims AI Dashboard", layout="wide")
+
+# ======================================================
+# Sidebar
+# ======================================================
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Go to",
@@ -27,18 +27,17 @@ page = st.sidebar.radio(
         "EDA",
         "Classification (Case Status)",
         "Cost Prediction",
-        "Abnormal Claims Detection",
+        "Anomaly Detection",
         "Forecasting",
         "About"
     ]
 )
 
-uploaded_file = st.sidebar.file_uploader(
-    "Upload CSV or Excel file",
-    type=["csv", "xlsx"]
-)
+uploaded_file = st.sidebar.file_uploader("Upload CSV / Excel", ["csv", "xlsx"])
 
-# ================= DATA LOADER =================
+# ======================================================
+# Data Loader
+# ======================================================
 def load_data(file):
     if file is None:
         return None
@@ -48,11 +47,12 @@ def load_data(file):
 
 df = load_data(uploaded_file)
 
-# ================= COMMON PREPROCESSING =================
-def preprocess_common(df):
+# ======================================================
+# Preprocessing
+# ======================================================
+def preprocess(df):
     df = df.copy()
 
-    # Convert dates
     if "DOB" in df.columns:
         df["DOB"] = pd.to_datetime(df["DOB"], errors="coerce")
         df["Age"] = pd.Timestamp.today().year - df["DOB"].dt.year
@@ -60,56 +60,50 @@ def preprocess_common(df):
     if "Visit Date" in df.columns:
         df["Visit Date"] = pd.to_datetime(df["Visit Date"], errors="coerce")
 
-    # Numeric conversion
     numeric_cols = [
         "Total Bill (RM)",
+        "No. of MC Days",
         "Insurance Amount (RM)",
-        "Patient Excess Amount (RM)",
-        "Annual Limit (RM)"
+        "Patient Excess Amount (RM)"
     ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+    for c in numeric_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df
 
 if df is not None:
-    df = preprocess_common(df)
+    df = preprocess(df)
 
-# ================= HOME =================
+# ======================================================
+# HOME
+# ======================================================
 if page == "Home":
-    st.title("🏥 Medical Claims AI Dashboard")
-
-    st.write("""
-    **AI-powered medical insurance analytics**
-    - RandomForest models
-    - Cost prediction
-    - Fraud & abuse detection
-    - Explainable AI (no SHAP dependency)
-    """)
+    st.title("Medical Claims AI Dashboard")
+    st.write("AI-powered medical insurance analytics using RandomForest & Time-Series models.")
 
     if df is not None:
         st.success("Dataset loaded successfully")
-        st.write(df.head())
+        st.dataframe(df.head())
     else:
-        st.info("Please upload a dataset")
+        st.info("Upload a dataset to begin.")
 
-# ================= EDA =================
+# ======================================================
+# EDA
+# ======================================================
 elif page == "EDA":
-    st.title("📊 Exploratory Data Analysis")
+    st.title("Exploratory Data Analysis")
 
     if df is None:
-        st.warning("Upload a dataset first")
+        st.warning("Upload dataset first.")
         st.stop()
 
-    st.subheader("Dataset Overview")
+    st.subheader("Summary")
     st.write(df.describe(include="all"))
 
     if "Diagnosis 1" in df.columns:
         st.subheader("Top Diagnoses")
-        fig, ax = plt.subplots()
-        df["Diagnosis 1"].astype(str).value_counts().head(15).plot.bar(ax=ax)
-        st.pyplot(fig)
+        st.bar_chart(df["Diagnosis 1"].value_counts().head(15))
 
     if "Total Bill (RM)" in df.columns:
         st.subheader("Total Bill Distribution")
@@ -117,203 +111,167 @@ elif page == "EDA":
         sns.histplot(df["Total Bill (RM)"].dropna(), kde=True, ax=ax)
         st.pyplot(fig)
 
-    # Correlation
-    required = ["Age", "Total Bill (RM)", "Diagnosis 1"]
-    if all(col in df.columns for col in required):
-        st.subheader("Correlation Analysis")
-
-        le = LabelEncoder()
-        temp = df[required].dropna()
-        temp["Diagnosis Encoded"] = le.fit_transform(temp["Diagnosis 1"].astype(str))
-
+    if {"Age", "Total Bill (RM)", "Diagnosis 1"}.issubset(df.columns):
+        st.subheader("Correlation: Age – Diagnosis – Cost")
+        enc = LabelEncoder()
+        temp = df.dropna(subset=["Age", "Total Bill (RM)", "Diagnosis 1"])
+        temp["Diagnosis Encoded"] = enc.fit_transform(temp["Diagnosis 1"].astype(str))
         corr = temp[["Age", "Diagnosis Encoded", "Total Bill (RM)"]].corr()
 
         fig, ax = plt.subplots()
         sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
         st.pyplot(fig)
 
-# ================= CLASSIFICATION =================
+# ======================================================
+# CLASSIFICATION
+# ======================================================
 elif page == "Classification (Case Status)":
-    st.title("✅ Claim Approval Classification")
+    st.title("Case Status Prediction (RandomForest)")
 
-    if df is None:
-        st.warning("Upload a dataset first")
+    if df is None or "Case Status" not in df.columns:
+        st.error("Dataset must contain Case Status.")
         st.stop()
 
-    if "Case Status" not in df.columns:
-        st.error("Missing 'Case Status'")
-        st.stop()
+    data = df.dropna(subset=["Diagnosis 1", "Case Status", "Age"]).copy()
 
-    features = []
-    for col in ["Age", "Total Bill (RM)", "Insurance Amount (RM)"]:
-        if col in df.columns:
-            features.append(col)
+    enc_diag = LabelEncoder()
+    enc_state = LabelEncoder()
+    enc_status = LabelEncoder()
 
-    if "Diagnosis 1" in df.columns:
-        le_diag = LabelEncoder()
-        df["Diagnosis Encoded"] = le_diag.fit_transform(df["Diagnosis 1"].astype(str))
-        features.append("Diagnosis Encoded")
+    data["Diagnosis Encoded"] = enc_diag.fit_transform(data["Diagnosis 1"].astype(str))
+    data["Clinic State Encoded"] = (
+        enc_state.fit_transform(data["Clinic State"].astype(str))
+        if "Clinic State" in data.columns else 0
+    )
+    data["Case Status Encoded"] = enc_status.fit_transform(data["Case Status"].astype(str))
 
-    if "Clinic State" in df.columns:
-        le_state = LabelEncoder()
-        df["Clinic State Encoded"] = le_state.fit_transform(df["Clinic State"].astype(str))
-        features.append("Clinic State Encoded")
+    features = ["Diagnosis Encoded", "Age", "Clinic State Encoded"]
+    X = data[features].fillna(0)
+    y = data["Case Status Encoded"]
 
-    data = df.dropna(subset=features + ["Case Status"]).copy()
-
-    le_status = LabelEncoder()
-    y = le_status.fit_transform(data["Case Status"].astype(str))
-    X = data[features]
-
-    st.write("📊 Case Status Distribution")
-    st.write(pd.Series(y).value_counts())
-
-    # ---- SAFE STRATIFICATION FIX ----
-    class_counts = Counter(y)
-    can_stratify = len(class_counts) > 1 and min(class_counts.values()) >= 2
+    counts = Counter(y)
+    can_stratify = len(counts) > 1 and min(counts.values()) >= 2
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        random_state=42,
+        X, y, test_size=0.2, random_state=42,
         stratify=y if can_stratify else None
     )
 
-    if not can_stratify:
-        st.warning("Stratified split disabled due to rare class")
-
-    model = RandomForestClassifier(
-        n_estimators=300,
-        random_state=42,
-        class_weight="balanced"
-    )
+    model = RandomForestClassifier(n_estimators=200, random_state=42)
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
     acc = accuracy_score(y_test, preds)
-
     st.metric("Accuracy", f"{acc*100:.2f}%")
-    st.text(classification_report(y_test, preds))
 
-    # Feature importance
     st.subheader("Feature Importance")
     fi = pd.DataFrame({
         "Feature": features,
         "Importance": model.feature_importances_
     }).sort_values("Importance", ascending=False)
+    st.bar_chart(fi.set_index("Feature"))
 
-    fig, ax = plt.subplots()
-    sns.barplot(x="Importance", y="Feature", data=fi, ax=ax)
-    st.pyplot(fig)
+    st.subheader("SHAP-like (Permutation Importance)")
+    perm = permutation_importance(model, X_test, y_test, n_repeats=5, random_state=42)
+    perm_df = pd.DataFrame({
+        "Feature": features,
+        "Importance": perm.importances_mean
+    }).sort_values("Importance", ascending=False)
+    st.bar_chart(perm_df.set_index("Feature"))
 
-    # SHAP-like explanation
-    st.subheader("SHAP-like Explanation")
-    expl = X_test.copy()
-    expl["Prediction"] = preds
-    st.write(expl.groupby("Prediction").mean())
-
-# ================= COST PREDICTION =================
+# ======================================================
+# COST PREDICTION
+# ======================================================
 elif page == "Cost Prediction":
-    st.title("💰 Total Bill Prediction")
+    st.title("Total Bill Prediction")
 
-    if df is None or "Total Bill (RM)" not in df.columns:
-        st.warning("Missing Total Bill data")
+    if df is None:
         st.stop()
 
-    features = []
-    for col in ["Age", "Insurance Amount (RM)"]:
-        if col in df.columns:
-            features.append(col)
+    data = df.dropna(subset=["Diagnosis 1", "Total Bill (RM)", "Age"]).copy()
+    enc = LabelEncoder()
+    data["Diagnosis Encoded"] = enc.fit_transform(data["Diagnosis 1"].astype(str))
 
-    if "Diagnosis 1" in df.columns:
-        le = LabelEncoder()
-        df["Diagnosis Encoded"] = le.fit_transform(df["Diagnosis 1"].astype(str))
-        features.append("Diagnosis Encoded")
-
-    data = df.dropna(subset=features + ["Total Bill (RM)"])
+    features = ["Diagnosis Encoded", "Age"]
+    if "Clinic State" in data.columns:
+        data["Clinic State Encoded"] = LabelEncoder().fit_transform(data["Clinic State"].astype(str))
+        features.append("Clinic State Encoded")
 
     X = data[features]
     y = data["Total Bill (RM)"]
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
 
-    model = RandomForestRegressor(
-        n_estimators=300,
-        random_state=42
-    )
+    model = RandomForestRegressor(n_estimators=300, random_state=42)
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
 
-    mae = mean_absolute_error(y_test, preds)
-    rmse = np.sqrt(mean_squared_error(y_test, preds))
+    st.metric("MAE", f"RM {mean_absolute_error(y_test, preds):,.2f}")
+    st.metric("RMSE", f"RM {np.sqrt(mean_squared_error(y_test, preds)):,.2f}")
 
-    st.metric("MAE (RM)", f"{mae:,.2f}")
-    st.metric("RMSE (RM)", f"{rmse:,.2f}")
+# ======================================================
+# ANOMALY DETECTION
+# ======================================================
+elif page == "Anomaly Detection":
+    st.title("Abnormal / Abusive Claim Detection")
 
-    fi = pd.DataFrame({
-        "Feature": features,
-        "Importance": model.feature_importances_
-    }).sort_values("Importance", ascending=False)
+    data = df.dropna(subset=["Total Bill (RM)", "Age"]).copy()
+    features = ["Total Bill (RM)", "Age"]
+    if "No. of MC Days" in data.columns:
+        features.append("No. of MC Days")
 
-    fig, ax = plt.subplots()
-    sns.barplot(x="Importance", y="Feature", data=fi, ax=ax)
-    st.pyplot(fig)
+    iso = IsolationForest(contamination=0.05, random_state=42)
+    data["Anomaly"] = iso.fit_predict(data[features].fillna(0))
 
-# ================= ABNORMAL CLAIMS =================
-elif page == "Abnormal Claims Detection":
-    st.title("🚨 Abnormal / Abusive Claims Detection")
+    anomalies = data[data["Anomaly"] == -1]
+    st.metric("Detected Anomalies", len(anomalies))
+    st.dataframe(anomalies.head(20))
 
-    if df is None or "Total Bill (RM)" not in df.columns:
-        st.warning("Upload valid dataset")
-        st.stop()
-
-    features = ["Total Bill (RM)"]
-    if "Age" in df.columns:
-        features.append("Age")
-
-    data = df[features].dropna()
-
-    iso = IsolationForest(
-        contamination=0.05,
-        random_state=42
-    )
-    data["Anomaly"] = iso.fit_predict(data)
-
-    df_result = data[data["Anomaly"] == -1]
-
-    st.write("⚠️ Flagged Abnormal Claims")
-    st.write(df_result.head(20))
-
-# ================= FORECASTING =================
+# ======================================================
+# FORECASTING (REAL)
+# ======================================================
 elif page == "Forecasting":
-    st.title("📈 Monthly Claim Cost Forecast")
+    st.title("Monthly Claim Cost Forecasting")
 
-    if df is None or "Visit Date" not in df.columns:
-        st.warning("Missing Visit Date")
-        st.stop()
+    ts = df.dropna(subset=["Visit Date", "Total Bill (RM)"])
+    monthly = ts.set_index("Visit Date").resample("M")["Total Bill (RM)"].sum()
 
-    df_time = df.dropna(subset=["Visit Date", "Total Bill (RM)"]).copy()
-    df_time["Month"] = df_time["Visit Date"].dt.to_period("M").astype(str)
+    horizon = st.slider("Forecast Months", 3, 24, 6)
 
-    monthly = df_time.groupby("Month")["Total Bill (RM)"].sum().reset_index()
+    model = SARIMAX(
+        monthly,
+        order=(1,1,1),
+        seasonal_order=(1,1,1,12),
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+    res = model.fit(disp=False)
+    fc = res.get_forecast(steps=horizon).summary_frame()
 
     fig, ax = plt.subplots()
-    ax.plot(monthly["Month"], monthly["Total Bill (RM)"], marker="o")
-    ax.set_xticklabels(monthly["Month"], rotation=45)
+    monthly.plot(ax=ax, label="History")
+    fc["mean"].plot(ax=ax, linestyle="--", label="Forecast")
+    ax.fill_between(fc.index, fc["mean_ci_lower"], fc["mean_ci_upper"], alpha=0.3)
+    ax.legend()
     st.pyplot(fig)
 
-# ================= ABOUT =================
+    # Optional: SARIMA vs Linear Trend
+    st.subheader("Model Comparison")
+    lr = LinearRegression()
+    X = np.arange(len(monthly)).reshape(-1,1)
+    lr.fit(X, monthly.values)
+    st.write("Linear trend slope:", lr.coef_[0])
+
+# ======================================================
+# ABOUT
+# ======================================================
 elif page == "About":
-    st.title("ℹ️ About")
+    st.title("About")
     st.write("""
-    **Medical Claims AI Dashboard**
-    - RandomForest-based analytics
-    - Explainable AI (no SHAP dependency)
-    - Fraud & abuse detection
-    - Cost forecasting
-    - Production-safe data handling
+    • RandomForest Classification & Regression  
+    • SHAP-like Permutation Importance  
+    • Abnormal Claim Detection (IsolationForest)  
+    • Proper SARIMA Time-Series Forecasting  
+    • Designed for Medical Insurance Analytics
     """)
