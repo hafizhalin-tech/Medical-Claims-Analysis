@@ -7,3 +7,4 @@ matplotlib
 seaborn
 openpyxl
 shap
+statsmodels>=0.14
