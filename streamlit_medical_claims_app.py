@@ -2,12 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import LinearRegression
-
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 st.set_page_config("Medical Claims AI Dashboard", layout="wide")
@@ -73,7 +71,7 @@ if df is not None:
 # ======================================================
 if page == "Home":
     st.title("Medical Claims AI Dashboard")
-    st.write("AI-powered medical insurance anomaly detection & forecasting.")
+    st.write("AI-powered abnormal claim detection and cost forecasting.")
 
     if df is not None:
         st.success("Dataset loaded successfully")
@@ -91,96 +89,56 @@ elif page == "Anomaly Detection":
         st.warning("Upload dataset first.")
         st.stop()
 
-    data = df.copy()
+    data = df.dropna(subset=["Total Bill (RM)", "Age"]).copy()
 
     feature_cols = ["Total Bill (RM)", "Age"]
+
     if "No. of MC Days" in data.columns:
         feature_cols.append("No. of MC Days")
+
     if "Insurance Amount (RM)" in data.columns:
         feature_cols.append("Insurance Amount (RM)")
-    if "Patient Excess Amount (RM)" in data.columns:
-        feature_cols.append("Patient Excess Amount (RM)")
 
-    data = data.dropna(subset=feature_cols)
+    X = data[feature_cols].fillna(0)
 
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(data[feature_cols])
+    X_scaled = scaler.fit_transform(X)
 
-    contamination = st.slider("Anomaly Sensitivity", 0.01, 0.2, 0.05)
+    contamination = st.slider("Expected Abnormal Rate (%)", 1, 20, 5) / 100
 
     iso = IsolationForest(contamination=contamination, random_state=42)
+    data["Anomaly Score"] = -iso.fit_score(X_scaled)
     data["Anomaly"] = iso.fit_predict(X_scaled)
-    data["Anomaly Score"] = iso.decision_function(X_scaled)
 
-    anomalies = data[data["Anomaly"] == -1]
-
-    st.metric("Detected Abnormal Claims", len(anomalies))
-    
-    # ------------------------------------------
+    # ---------------------------------------
     # Explain anomaly drivers
-    # ------------------------------------------
+    # ---------------------------------------
     z_scores = pd.DataFrame(
         np.abs(X_scaled),
         columns=[f"{c} Deviation" for c in feature_cols],
         index=data.index
     )
-    
+
     data = pd.concat([data, z_scores], axis=1)
-    
+
     def top_driver(row):
         devs = row[[f"{c} Deviation" for c in feature_cols]]
         return devs.idxmax().replace(" Deviation", "")
-    
+
     data["Top Anomaly Driver"] = data.apply(top_driver, axis=1)
-    
-    # 🔥 RECOMPUTE anomalies after adding columns
+
     anomalies = data[data["Anomaly"] == -1]
-    
+
+    st.metric("Detected Abnormal Claims", len(anomalies))
+
     show_cols = [c for c in feature_cols if c in anomalies.columns]
     show_cols += ["Anomaly Score", "Top Anomaly Driver"]
-    
+
     st.subheader("Top Abnormal Claims with Drivers")
-    st.dataframe(anomalies[show_cols].sort_values("Anomaly Score").head(30))
-    
+    st.dataframe(anomalies[show_cols].sort_values("Anomaly Score", ascending=False).head(30))
+
     st.subheader("Anomaly Driver Distribution")
     st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
-    
-    anomalies = data[data["Anomaly"] == -1]
-
-st.metric("Detected Abnormal Claims", len(anomalies))
-
-# ------------------------------------------
-# Explain anomaly drivers
-# ------------------------------------------
-z_scores = pd.DataFrame(
-    np.abs(X_scaled),
-    columns=[f"{c} Deviation" for c in feature_cols],
-    index=data.index
-)
-
-data = pd.concat([data, z_scores], axis=1)
-
-def top_driver(row):
-    devs = row[[f"{c} Deviation" for c in feature_cols]]
-    return devs.idxmax().replace(" Deviation", "")
-
-data["Top Anomaly Driver"] = data.apply(top_driver, axis=1)
-
-# 🔥 RECOMPUTE anomalies after adding columns
-anomalies = data[data["Anomaly"] == -1]
-
-show_cols = [c for c in feature_cols if c in anomalies.columns]
-show_cols += ["Anomaly Score", "Top Anomaly Driver"]
-
-st.subheader("Top Abnormal Claims with Drivers")
-st.dataframe(anomalies[show_cols].sort_values("Anomaly Score").head(30))
-
-st.subheader("Anomaly Driver Distribution")
-st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
-
-    
-    st.subheader("Anomaly Driver Distribution")
-    st.bar_chart(data.loc[data["Anomaly"] == -1, "Top Anomaly Driver"].value_counts())
 
 # ======================================================
 # FORECASTING
@@ -193,7 +151,12 @@ elif page == "Forecasting":
         st.stop()
 
     ts = df.dropna(subset=["Visit Date", "Total Bill (RM)"])
+
     monthly = ts.set_index("Visit Date").resample("M")["Total Bill (RM)"].sum()
+
+    if len(monthly) < 6:
+        st.warning("Not enough history for forecasting.")
+        st.stop()
 
     horizon = st.slider("Forecast Months", 3, 24, 6)
 
@@ -204,6 +167,7 @@ elif page == "Forecasting":
         enforce_stationarity=False,
         enforce_invertibility=False
     )
+
     res = model.fit(disp=False)
     fc = res.get_forecast(steps=horizon).summary_frame()
 
@@ -214,11 +178,15 @@ elif page == "Forecasting":
     ax.legend()
     st.pyplot(fig)
 
-    st.subheader("Trend Model Insight")
+    st.subheader("Forecast Table")
+    st.dataframe(fc[["mean", "mean_ci_lower", "mean_ci_upper"]])
+
+    # Comparison
+    st.subheader("Linear Trend Comparison")
     lr = LinearRegression()
-    X = np.arange(len(monthly)).reshape(-1,1)
-    lr.fit(X, monthly.values)
-    st.write("Linear trend slope:", lr.coef_[0])
+    X_lr = np.arange(len(monthly)).reshape(-1, 1)
+    lr.fit(X_lr, monthly.values)
+    st.write("Trend Slope:", lr.coef_[0])
 
 # ======================================================
 # ABOUT
@@ -226,8 +194,8 @@ elif page == "Forecasting":
 elif page == "About":
     st.title("About")
     st.write("""
-    • IsolationForest Abnormal Claim Detection  
-    • Feature Deviation Explanation  
-    • SARIMA Time-Series Forecasting  
-    • Designed for Medical Insurance Risk Analytics
+    • IsolationForest for abnormal claim detection  
+    • Deviation-based anomaly explanation  
+    • SARIMA time-series forecasting  
+    • Designed for Medical Insurance Analytics  
     """)
