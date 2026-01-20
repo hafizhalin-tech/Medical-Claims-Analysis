@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import LinearRegression
 from statsmodels.tsa.statespace.sarimax import SARIMAX
@@ -107,12 +107,10 @@ elif page == "Anomaly Detection":
     contamination = st.slider("Expected Abnormal Rate (%)", 1, 20, 5) / 100
 
     iso = IsolationForest(contamination=contamination, random_state=42)
-
     iso.fit(X_scaled)
-    
+
     data["Anomaly Score"] = -iso.decision_function(X_scaled)
     data["Anomaly"] = iso.predict(X_scaled)
-
 
     # ---------------------------------------
     # Explain anomaly drivers
@@ -139,7 +137,11 @@ elif page == "Anomaly Detection":
     show_cols += ["Anomaly Score", "Top Anomaly Driver"]
 
     st.subheader("Top Abnormal Claims with Drivers")
-    st.dataframe(anomalies[show_cols].sort_values("Anomaly Score", ascending=False).head(30))
+    st.dataframe(
+        anomalies[show_cols]
+        .sort_values("Anomaly Score", ascending=False)
+        .head(30)
+    )
 
     st.subheader("Anomaly Driver Distribution")
     st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
