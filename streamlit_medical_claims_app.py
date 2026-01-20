@@ -107,8 +107,12 @@ elif page == "Anomaly Detection":
     contamination = st.slider("Expected Abnormal Rate (%)", 1, 20, 5) / 100
 
     iso = IsolationForest(contamination=contamination, random_state=42)
-    data["Anomaly Score"] = -iso.fit_score(X_scaled)
-    data["Anomaly"] = iso.fit_predict(X_scaled)
+
+    iso.fit(X_scaled)
+    
+    data["Anomaly Score"] = -iso.decision_function(X_scaled)
+    data["Anomaly"] = iso.predict(X_scaled)
+
 
     # ---------------------------------------
     # Explain anomaly drivers
