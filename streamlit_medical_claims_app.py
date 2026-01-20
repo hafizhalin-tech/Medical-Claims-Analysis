@@ -115,7 +115,7 @@ elif page == "Anomaly Detection":
     anomalies = data[data["Anomaly"] == -1]
 
     st.metric("Detected Abnormal Claims", len(anomalies))
-
+    
     # ------------------------------------------
     # Explain anomaly drivers
     # ------------------------------------------
@@ -124,19 +124,61 @@ elif page == "Anomaly Detection":
         columns=[f"{c} Deviation" for c in feature_cols],
         index=data.index
     )
-
+    
     data = pd.concat([data, z_scores], axis=1)
-
+    
     def top_driver(row):
         devs = row[[f"{c} Deviation" for c in feature_cols]]
         return devs.idxmax().replace(" Deviation", "")
-
+    
     data["Top Anomaly Driver"] = data.apply(top_driver, axis=1)
-
+    
+    # 🔥 RECOMPUTE anomalies after adding columns
+    anomalies = data[data["Anomaly"] == -1]
+    
+    show_cols = [c for c in feature_cols if c in anomalies.columns]
+    show_cols += ["Anomaly Score", "Top Anomaly Driver"]
+    
     st.subheader("Top Abnormal Claims with Drivers")
-    show_cols = feature_cols + ["Anomaly Score", "Top Anomaly Driver"]
     st.dataframe(anomalies[show_cols].sort_values("Anomaly Score").head(30))
+    
+    st.subheader("Anomaly Driver Distribution")
+    st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
+    
+    anomalies = data[data["Anomaly"] == -1]
 
+st.metric("Detected Abnormal Claims", len(anomalies))
+
+# ------------------------------------------
+# Explain anomaly drivers
+# ------------------------------------------
+z_scores = pd.DataFrame(
+    np.abs(X_scaled),
+    columns=[f"{c} Deviation" for c in feature_cols],
+    index=data.index
+)
+
+data = pd.concat([data, z_scores], axis=1)
+
+def top_driver(row):
+    devs = row[[f"{c} Deviation" for c in feature_cols]]
+    return devs.idxmax().replace(" Deviation", "")
+
+data["Top Anomaly Driver"] = data.apply(top_driver, axis=1)
+
+# 🔥 RECOMPUTE anomalies after adding columns
+anomalies = data[data["Anomaly"] == -1]
+
+show_cols = [c for c in feature_cols if c in anomalies.columns]
+show_cols += ["Anomaly Score", "Top Anomaly Driver"]
+
+st.subheader("Top Abnormal Claims with Drivers")
+st.dataframe(anomalies[show_cols].sort_values("Anomaly Score").head(30))
+
+st.subheader("Anomaly Driver Distribution")
+st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
+
+    
     st.subheader("Anomaly Driver Distribution")
     st.bar_chart(data.loc[data["Anomaly"] == -1, "Top Anomaly Driver"].value_counts())
 
