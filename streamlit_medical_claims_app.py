@@ -33,8 +33,13 @@ def load_data(file):
     if file is None:
         return None
     if file.name.endswith(".csv"):
-        return pd.read_csv(file)
-    return pd.read_excel(file)
+        df = pd.read_csv(file)
+    else:
+        df = pd.read_excel(file)
+
+    # Track original Excel row
+    df["Excel Row"] = df.index + 2
+    return df
 
 df = load_data(uploaded_file)
 
@@ -112,9 +117,7 @@ elif page == "Anomaly Detection":
     data["Anomaly Score"] = -iso.decision_function(X_scaled)
     data["Anomaly"] = iso.predict(X_scaled)
 
-    # ---------------------------------------
-    # Explain anomaly drivers
-    # ---------------------------------------
+    # ---- Explain Drivers ----
     z_scores = pd.DataFrame(
         np.abs(X_scaled),
         columns=[f"{c} Deviation" for c in feature_cols],
@@ -133,15 +136,21 @@ elif page == "Anomaly Detection":
 
     st.metric("Detected Abnormal Claims", len(anomalies))
 
-    show_cols = [c for c in feature_cols if c in anomalies.columns]
-    show_cols += ["Anomaly Score", "Top Anomaly Driver"]
+    show_cols = ["Excel Row"] + feature_cols + ["Anomaly Score", "Top Anomaly Driver"]
 
     st.subheader("Top Abnormal Claims with Drivers")
-    st.dataframe(
+
+    display_df = (
         anomalies[show_cols]
         .sort_values("Anomaly Score", ascending=False)
         .head(30)
+        .reset_index(drop=True)
     )
+
+    def highlight_rows(row):
+        return ["background-color: #ffcccc"] * len(row)
+
+    st.dataframe(display_df.style.apply(highlight_rows, axis=1), use_container_width=True)
 
     st.subheader("Anomaly Driver Distribution")
     st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
@@ -187,7 +196,6 @@ elif page == "Forecasting":
     st.subheader("Forecast Table")
     st.dataframe(fc[["mean", "mean_ci_lower", "mean_ci_upper"]])
 
-    # Comparison
     st.subheader("Linear Trend Comparison")
     lr = LinearRegression()
     X_lr = np.arange(len(monthly)).reshape(-1, 1)
@@ -201,7 +209,8 @@ elif page == "About":
     st.title("About")
     st.write("""
     • IsolationForest for abnormal claim detection  
-    • Deviation-based anomaly explanation  
-    • SARIMA time-series forecasting  
-    • Designed for Medical Insurance Analytics  
+    • Excel row tracking for audit trail  
+    • Driver-based anomaly explanation  
+    • SARIMA forecasting  
+    • Visual highlighting of risky claims  
     """)
