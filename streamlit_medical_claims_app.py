@@ -147,7 +147,8 @@ elif page == "Anomaly Detection":
         .reset_index(drop=True)
     )
 
-    
+    def highlight_rows(row):
+        return ["background-color: #ffcccc"] * len(row)
 
     st.dataframe(display_df.style.apply(highlight_rows, axis=1), use_container_width=True)
 
