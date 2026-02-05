@@ -18,9 +18,9 @@ page = st.sidebar.radio(
     "Go to",
     [
         "Home",
-        "Claim Analytics",
         "Anomaly Detection",
         "Forecasting",
+        "Clinic Risk Scoring",
         "About"
     ]
 )
@@ -72,67 +72,59 @@ if df is not None:
     df = preprocess(df)
 
 # ======================================================
+# FILTERS
+# ======================================================
+def apply_filters(df):
+    st.sidebar.subheader("Filters")
+
+    if "Clinic State" in df.columns:
+        states = st.sidebar.multiselect("Clinic State", sorted(df["Clinic State"].dropna().unique()))
+    else:
+        states = []
+
+    if "Clinic Code" in df.columns:
+        clinics = st.sidebar.multiselect("Clinic Code", sorted(df["Clinic Code"].dropna().unique()))
+    else:
+        clinics = []
+
+    if "Diagnosis 1" in df.columns:
+        diags = st.sidebar.multiselect("Diagnosis", sorted(df["Diagnosis 1"].dropna().unique()))
+    else:
+        diags = []
+
+    if "Visit Date" in df.columns:
+        min_d, max_d = df["Visit Date"].min(), df["Visit Date"].max()
+        date_range = st.sidebar.date_input("Visit Date Range", [min_d, max_d])
+    else:
+        date_range = None
+
+    f = df.copy()
+
+    if states:
+        f = f[f["Clinic State"].isin(states)]
+    if clinics:
+        f = f[f["Clinic Code"].isin(clinics)]
+    if diags:
+        f = f[f["Diagnosis 1"].isin(diags)]
+    if date_range and len(date_range) == 2:
+        f = f[(f["Visit Date"] >= pd.to_datetime(date_range[0])) &
+              (f["Visit Date"] <= pd.to_datetime(date_range[1]))]
+
+    return f
+
+
+# ======================================================
 # HOME
 # ======================================================
 if page == "Home":
     st.title("Medical Claims AI Dashboard")
 
     if df is not None:
-        st.success("Dataset loaded successfully")
-        st.dataframe(df.head())
+        fdf = apply_filters(df)
+        st.success(f"Loaded {len(fdf)} filtered records")
+        st.dataframe(fdf.head())
     else:
-        st.info("Upload a dataset to begin.")
-
-# ======================================================
-# CLAIM ANALYTICS
-# ======================================================
-elif page == "Claim Analytics":
-    st.title("Claim Distribution Analytics")
-
-    if df is None:
-        st.warning("Upload dataset first.")
-        st.stop()
-
-    col1, col2 = st.columns(2)
-
-    # ---- Clinic Code ----
-    if "Clinic Code" in df.columns:
-        clinic_stats = df.groupby("Clinic Code")["Total Bill (RM)"].agg(["count", "sum"]).sort_values("sum", ascending=False)
-
-        col1.subheader("Top Clinics by Cost")
-        col1.dataframe(clinic_stats.head(10))
-
-        col1.bar_chart(clinic_stats["sum"].head(10))
-
-    # ---- Clinic State ----
-    if "Clinic State" in df.columns:
-        state_stats = df.groupby("Clinic State")["Total Bill (RM)"].sum().sort_values(ascending=False)
-
-        col2.subheader("Cost by Clinic State")
-        col2.dataframe(state_stats)
-        col2.bar_chart(state_stats)
-
-    st.divider()
-
-    # ---- Case / Claims Type ----
-    if "Case/ Claims Type" in df.columns:
-        st.subheader("Case / Claims Type Analysis")
-
-        case_stats = df.groupby("Case/ Claims Type")["Total Bill (RM)"].agg(["count", "sum"]).sort_values("sum", ascending=False)
-
-        st.dataframe(case_stats)
-        st.bar_chart(case_stats["sum"])
-
-    st.divider()
-
-    # ---- Diagnosis ----
-    if "Diagnosis 1" in df.columns:
-        st.subheader("Diagnosis (Disease) Analysis")
-
-        diag_stats = df.groupby("Diagnosis 1")["Total Bill (RM)"].agg(["count", "sum"]).sort_values("sum", ascending=False)
-
-        st.dataframe(diag_stats.head(20))
-        st.bar_chart(diag_stats["sum"].head(20))
+        st.info("Upload dataset to begin.")
 
 # ======================================================
 # ANOMALY DETECTION
@@ -141,10 +133,10 @@ elif page == "Anomaly Detection":
     st.title("Abnormal / Abusive Claim Detection")
 
     if df is None:
-        st.warning("Upload dataset first.")
         st.stop()
 
-    data = df.dropna(subset=["Total Bill (RM)", "Age"]).copy()
+    data = apply_filters(df)
+    data = data.dropna(subset=["Total Bill (RM)", "Age"]).copy()
 
     feature_cols = ["Total Bill (RM)", "Age"]
 
@@ -187,14 +179,57 @@ elif page == "Anomaly Detection":
 
     show_cols = ["Excel Row"] + feature_cols + ["Anomaly Score", "Top Anomaly Driver"]
 
-    display_df = anomalies[show_cols].sort_values("Anomaly Score", ascending=False).head(30).reset_index(drop=True)
+    st.dataframe(
+        anomalies[show_cols]
+        .sort_values("Anomaly Score", ascending=False)
+        .head(30),
+        use_container_width=True
+    )
 
-    def highlight_rows(row):
-        return ["background-color: #ffcccc"] * len(row)
+# ======================================================
+# CLINIC RISK SCORING
+# ======================================================
+elif page == "Clinic Risk Scoring":
+    st.title("AI Risk Scoring per Clinic")
 
-    st.dataframe(display_df.style.apply(highlight_rows, axis=1), use_container_width=True)
+    if df is None:
+        st.stop()
 
-    st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
+    data = apply_filters(df)
+    data = data.dropna(subset=["Total Bill (RM)", "Age"]).copy()
+
+    feature_cols = ["Total Bill (RM)", "Age"]
+    if "No. of MC Days" in data.columns:
+        feature_cols.append("No. of MC Days")
+
+    X = StandardScaler().fit_transform(data[feature_cols].fillna(0))
+
+    iso = IsolationForest(contamination=0.05, random_state=42)
+    data["Anomaly"] = iso.fit_predict(X)
+
+    clinic_stats = data.groupby("Clinic Code").agg(
+        Claims=("Clinic Code", "count"),
+        AnomalyRate=("Anomaly", lambda x: (x == -1).mean()),
+        AvgBill=("Total Bill (RM)", "mean"),
+        AvgMC=("No. of MC Days", "mean")
+    ).fillna(0)
+
+    clinic_stats["RiskScore"] = (
+        clinic_stats["AnomalyRate"] * 0.4 +
+        clinic_stats["AvgBill"] / clinic_stats["AvgBill"].max() * 0.4 +
+        clinic_stats["AvgMC"] / clinic_stats["AvgMC"].max() * 0.2
+    )
+
+    clinic_stats["RiskScore"] = (clinic_stats["RiskScore"] /
+                                 clinic_stats["RiskScore"].max()) * 100
+
+    clinic_stats = clinic_stats.sort_values("RiskScore", ascending=False)
+
+    st.subheader("Clinic Risk Ranking")
+    st.dataframe(clinic_stats.round(2), use_container_width=True)
+
+    st.subheader("Risk Score Chart")
+    st.bar_chart(clinic_stats["RiskScore"])
 
 # ======================================================
 # FORECASTING
@@ -203,18 +238,16 @@ elif page == "Forecasting":
     st.title("Monthly Claim Cost Forecasting")
 
     if df is None:
-        st.warning("Upload dataset first.")
         st.stop()
 
-    ts = df.dropna(subset=["Visit Date", "Total Bill (RM)"])
+    ts = apply_filters(df)
+    ts = ts.dropna(subset=["Visit Date", "Total Bill (RM)"])
 
     monthly = ts.set_index("Visit Date").resample("M")["Total Bill (RM)"].sum()
 
     horizon = st.slider("Forecast Months", 3, 24, 6)
 
-    model = SARIMAX(monthly, order=(1,1,1), seasonal_order=(1,1,1,12),
-                    enforce_stationarity=False, enforce_invertibility=False)
-
+    model = SARIMAX(monthly, order=(1,1,1), seasonal_order=(1,1,1,12))
     res = model.fit(disp=False)
     fc = res.get_forecast(steps=horizon).summary_frame()
 
@@ -225,8 +258,6 @@ elif page == "Forecasting":
     ax.legend()
     st.pyplot(fig)
 
-    st.dataframe(fc[["mean", "mean_ci_lower", "mean_ci_upper"]])
-
 # ======================================================
 # ABOUT
 # ======================================================
@@ -234,8 +265,8 @@ elif page == "About":
     st.title("About")
     st.write("""
     • IsolationForest anomaly detection  
-    • Clinic & diagnosis analytics  
+    • AI risk scoring per clinic  
+    • Interactive filtering  
     • SARIMA forecasting  
-    • Excel row audit tracking  
+    • Audit-focused analytics  
     """)
-
