@@ -18,6 +18,7 @@ page = st.sidebar.radio(
     "Go to",
     [
         "Home",
+        "Claim Analytics",
         "Anomaly Detection",
         "Forecasting",
         "About"
@@ -37,7 +38,6 @@ def load_data(file):
     else:
         df = pd.read_excel(file)
 
-    # Track original Excel row
     df["Excel Row"] = df.index + 2
     return df
 
@@ -76,13 +76,63 @@ if df is not None:
 # ======================================================
 if page == "Home":
     st.title("Medical Claims AI Dashboard")
-    st.write("AI-powered abnormal claim detection and cost forecasting.")
 
     if df is not None:
         st.success("Dataset loaded successfully")
         st.dataframe(df.head())
     else:
         st.info("Upload a dataset to begin.")
+
+# ======================================================
+# CLAIM ANALYTICS
+# ======================================================
+elif page == "Claim Analytics":
+    st.title("Claim Distribution Analytics")
+
+    if df is None:
+        st.warning("Upload dataset first.")
+        st.stop()
+
+    col1, col2 = st.columns(2)
+
+    # ---- Clinic Code ----
+    if "Clinic Code" in df.columns:
+        clinic_stats = df.groupby("Clinic Code")["Total Bill (RM)"].agg(["count", "sum"]).sort_values("sum", ascending=False)
+
+        col1.subheader("Top Clinics by Cost")
+        col1.dataframe(clinic_stats.head(10))
+
+        col1.bar_chart(clinic_stats["sum"].head(10))
+
+    # ---- Clinic State ----
+    if "Clinic State" in df.columns:
+        state_stats = df.groupby("Clinic State")["Total Bill (RM)"].sum().sort_values(ascending=False)
+
+        col2.subheader("Cost by Clinic State")
+        col2.dataframe(state_stats)
+        col2.bar_chart(state_stats)
+
+    st.divider()
+
+    # ---- Case / Claims Type ----
+    if "Case/ Claims Type" in df.columns:
+        st.subheader("Case / Claims Type Analysis")
+
+        case_stats = df.groupby("Case/ Claims Type")["Total Bill (RM)"].agg(["count", "sum"]).sort_values("sum", ascending=False)
+
+        st.dataframe(case_stats)
+        st.bar_chart(case_stats["sum"])
+
+    st.divider()
+
+    # ---- Diagnosis ----
+    if "Diagnosis 1" in df.columns:
+        st.subheader("Diagnosis (Disease) Analysis")
+
+        diag_stats = df.groupby("Diagnosis 1")["Total Bill (RM)"].agg(["count", "sum"]).sort_values("sum", ascending=False)
+
+        st.dataframe(diag_stats.head(20))
+        st.bar_chart(diag_stats["sum"].head(20))
 
 # ======================================================
 # ANOMALY DETECTION
@@ -117,7 +167,6 @@ elif page == "Anomaly Detection":
     data["Anomaly Score"] = -iso.decision_function(X_scaled)
     data["Anomaly"] = iso.predict(X_scaled)
 
-    # ---- Explain Drivers ----
     z_scores = pd.DataFrame(
         np.abs(X_scaled),
         columns=[f"{c} Deviation" for c in feature_cols],
@@ -138,21 +187,13 @@ elif page == "Anomaly Detection":
 
     show_cols = ["Excel Row"] + feature_cols + ["Anomaly Score", "Top Anomaly Driver"]
 
-    st.subheader("Top Abnormal Claims with Drivers")
-
-    display_df = (
-        anomalies[show_cols]
-        .sort_values("Anomaly Score", ascending=False)
-        .head(30)
-        .reset_index(drop=True)
-    )
+    display_df = anomalies[show_cols].sort_values("Anomaly Score", ascending=False).head(30).reset_index(drop=True)
 
     def highlight_rows(row):
         return ["background-color: #ffcccc"] * len(row)
 
     st.dataframe(display_df.style.apply(highlight_rows, axis=1), use_container_width=True)
 
-    st.subheader("Anomaly Driver Distribution")
     st.bar_chart(anomalies["Top Anomaly Driver"].value_counts())
 
 # ======================================================
@@ -169,19 +210,10 @@ elif page == "Forecasting":
 
     monthly = ts.set_index("Visit Date").resample("M")["Total Bill (RM)"].sum()
 
-    if len(monthly) < 6:
-        st.warning("Not enough history for forecasting.")
-        st.stop()
-
     horizon = st.slider("Forecast Months", 3, 24, 6)
 
-    model = SARIMAX(
-        monthly,
-        order=(1,1,1),
-        seasonal_order=(1,1,1,12),
-        enforce_stationarity=False,
-        enforce_invertibility=False
-    )
+    model = SARIMAX(monthly, order=(1,1,1), seasonal_order=(1,1,1,12),
+                    enforce_stationarity=False, enforce_invertibility=False)
 
     res = model.fit(disp=False)
     fc = res.get_forecast(steps=horizon).summary_frame()
@@ -193,14 +225,7 @@ elif page == "Forecasting":
     ax.legend()
     st.pyplot(fig)
 
-    st.subheader("Forecast Table")
     st.dataframe(fc[["mean", "mean_ci_lower", "mean_ci_upper"]])
-
-    st.subheader("Linear Trend Comparison")
-    lr = LinearRegression()
-    X_lr = np.arange(len(monthly)).reshape(-1, 1)
-    lr.fit(X_lr, monthly.values)
-    st.write("Trend Slope:", lr.coef_[0])
 
 # ======================================================
 # ABOUT
@@ -208,9 +233,9 @@ elif page == "Forecasting":
 elif page == "About":
     st.title("About")
     st.write("""
-    • IsolationForest for abnormal claim detection  
-    • Excel row tracking for audit trail  
-    • Driver-based anomaly explanation  
+    • IsolationForest anomaly detection  
+    • Clinic & diagnosis analytics  
     • SARIMA forecasting  
-    • Visual highlighting of risky claims  
+    • Excel row audit tracking  
     """)
+
