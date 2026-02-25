@@ -204,7 +204,7 @@ elif page == "Claim Analytics":
     st.subheader("Claim Type Distribution")
 
     # Auto-detect possible claim type column names
-    possible_cols = ["Claim Type", "Claims Type", "Type", "Payment Type"]
+    possible_cols = ["Claim Type", "Claims Type", "Type", "Payment Type", "Case/ Claims Type"]
 
     claim_type_col = None
     for col in possible_cols:
