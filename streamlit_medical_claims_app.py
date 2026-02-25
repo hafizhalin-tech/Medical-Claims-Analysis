@@ -198,6 +198,37 @@ elif page == "Claim Analytics":
         st.dataframe(diag_stats.head(20))
         st.bar_chart(diag_stats.head(20))
 
+    # ======================================================
+    # CLAIM TYPE DISTRIBUTION
+    # ======================================================
+    st.subheader("Claim Type Distribution")
+
+    # Auto-detect possible claim type column names
+    possible_cols = ["Claim Type", "Claims Type", "Type", "Payment Type"]
+
+    claim_type_col = None
+    for col in possible_cols:
+        if col in df.columns:
+            claim_type_col = col
+            break
+
+    if claim_type_col is not None:
+        claim_counts = df[claim_type_col].value_counts()
+
+        st.dataframe(claim_counts.rename("Number of Cases"))
+
+        fig2, ax2 = plt.subplots()
+        ax2.bar(claim_counts.index.astype(str), claim_counts.values)
+        ax2.set_title("Number of Cases by Claim Type")
+        ax2.set_ylabel("Number of Cases")
+        ax2.set_xlabel("Claim Type")
+        st.pyplot(fig2)
+
+    else:
+        st.warning("No Claim Type column found in dataset.")
+
+
+
 
 # ======================================================
 # ANOMALY DETECTION
