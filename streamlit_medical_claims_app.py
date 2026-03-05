@@ -28,35 +28,35 @@ DEFAULT_CPI = {
 # ======================================================
 # CPI LOADERS
 # ======================================================
-def fetch_live_cpi():
-    try:
-        # Placeholder for real API
-        return DEFAULT_CPI, "Default (API Placeholder)"
-    except:
-        return None, None
+#def fetch_live_cpi():
+#    try:
+#        # Placeholder for real API
+#        return DEFAULT_CPI, "Default (API Placeholder)"
+#    except:
+#        return None, None
 
 
-def load_uploaded_cpi(file):
-    if file is None:
-        return None, None
-    try:
-        cpi_df = pd.read_excel(file)
-        return dict(zip(cpi_df["Year"], cpi_df["CPI"])), "Uploaded File"
-    except:
-        return None, None
+#def load_uploaded_cpi(file):
+#    if file is None:
+#        return None, None
+#    try:
+#        cpi_df = pd.read_excel(file)
+#        return dict(zip(cpi_df["Year"], cpi_df["CPI"])), "Uploaded File"
+#    except:
+#        return None, None
 
 
-def get_hybrid_cpi(uploaded_cpi_file=None, use_api=True):
-    if use_api:
-        api_cpi, source = fetch_live_cpi()
-        if api_cpi:
-            return api_cpi, source
+#def get_hybrid_cpi(uploaded_cpi_file=None, use_api=True):
+#    if use_api:
+#        api_cpi, source = fetch_live_cpi()
+#        if api_cpi:
+#            return api_cpi, source
 
-    uploaded_cpi, source = load_uploaded_cpi(uploaded_cpi_file)
-    if uploaded_cpi:
-        return uploaded_cpi, source
+#    uploaded_cpi, source = load_uploaded_cpi(uploaded_cpi_file)
+#    if uploaded_cpi:
+#        return uploaded_cpi, source
 
-    return DEFAULT_CPI, "Built-in Default"
+#    return DEFAULT_CPI, "Built-in Default"
 
 
 # ======================================================
