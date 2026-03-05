@@ -70,9 +70,9 @@ page = st.sidebar.radio(
 
 uploaded_file = st.sidebar.file_uploader("Upload CSV / Excel", ["csv", "xlsx"])
 
-st.sidebar.subheader("CPI Inflation Adjustment")
-use_api = st.sidebar.checkbox("Use Live CPI API", True)
-uploaded_cpi_file = st.sidebar.file_uploader("Upload CPI Table (Year, CPI)", ["xlsx"])
+#st.sidebar.subheader("CPI Inflation Adjustment")
+#use_api = st.sidebar.checkbox("Use Live CPI API", True)
+#uploaded_cpi_file = st.sidebar.file_uploader("Upload CPI Table (Year, CPI)", ["xlsx"])
 
 
 # ======================================================
